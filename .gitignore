@@ -1,0 +1,7 @@
+.sf/
+.sfdx/
+.localdevserver/
+deploy-options.json
+*.log
+.DS_Store
+Thumbs.db
