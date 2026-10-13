@@ -5,7 +5,7 @@
       "default": true
     }
   ],
-  "name": "apex-flex-credit-guard",
+  "name": "apex-flex-credit-overage-guard",
   "namespace": "",
   "sfdcLoginUrl": "https://login.salesforce.com",
   "sourceApiVersion": "67.0"

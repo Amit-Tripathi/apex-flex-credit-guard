@@ -1,41 +1,46 @@
-# apex-flex-credit-guard
+# apex-flex-credit-overage-guard
 
-Apex a partner calls at the start of their own high-consumption transaction. If the chosen Digital Wallet card is already at its entitlement, or the upcoming call’s estimated units would reach it, `FlexCreditGuard` throws and rolls back that transaction’s DML.
+Call `FlexCreditOverageGuard` at the start of an agent action that will consume Flex Credits. If that card is already at its entitlement, the guard throws and rolls back the action’s DML. The caller does not pass an estimate of what this call will use.
 
 ```apex
-FlexCreditGuard.assertWithinEntitlement('FlexCredits', estimatedUnitsForThisCall);
-// then the partner’s own work
+FlexCreditOverageGuard.assertWithinEntitlement();
+// then the agent action continues
 ```
 
-Call it before the work, in the same transaction. A later scheduled check cannot prevent that transaction.
+An agent action calls it once, then does its own work. A throw stops that action. A normal return means the action continues. A later scheduled check cannot prevent the transaction that is already running.
 
-This folder is a sibling of `apex-partner-digital-wallet`. It uses the same GitHub account and the same Digital Wallet org.
+The guard reads `computeConsumption` and finds the `sfdw.ConsumptionCard` whose `cardDefinitionDeveloperName` is `FlexCredits`, `businessEnvType` is `Production`, and `usageModel` is `PrePurchased`. Those values are on the standard card. The caller does not pass them.
 
-- GitHub: [Amit-Tripathi/apex-flex-credit-guard](https://github.com/Amit-Tripathi/apex-flex-credit-guard)
-- Org alias: `DigitalWalletDemo` (Unlimited, Digital Wallet enabled). The project stores that alias locally, so the global CLI default org stays unchanged.
+## Deploy and test
+
+Org alias: `DigitalWalletDemo` (Unlimited, Digital Wallet enabled). The project stores that alias locally, so the global CLI default org stays unchanged.
 
 ```bash
 sf project deploy start --source-dir force-app --target-org DigitalWalletDemo
-sf apex run test --tests FlexCreditGuardTest --code-coverage --result-format human --wait 10 --target-org DigitalWalletDemo
+sf apex run test --tests FlexCreditOverageGuardTest --code-coverage --result-format human --wait 10 --target-org DigitalWalletDemo
 ```
-
-`FlexCredits` is an example developer name. Confirm the real card definition developer name in the target org. Salesforce Help: “Find the Card Definition Developer Name”. The display name “Flex Credits” is not that value.
 
 ## What this does not do
 
 Digital Wallet does not throttle the product at 100%. This sample only stops Apex that calls it.
 
 - It does not reserve credits. Concurrent transactions can all pass.
-- It does not undo usage Agentforce, Data 360, or any other publisher already emitted. Those events are outside the caller’s transaction. The exception aborts this Apex transaction. It does not roll back Digital Wallet usage.
-- `unitsConsumed >= totalEntitlement` only blocks work that is already at the cap. Preventing the next call from crossing the line requires `estimatedUnits`. A null estimate is treated as 0.
+- It does not undo usage that Agentforce, Data 360, or any other publisher already emitted. Those events are outside the caller’s transaction. The exception aborts this Apex transaction. It does not roll back Digital Wallet usage.
+- It blocks when units already consumed are at or over the entitlement. It does not estimate what this call will use. A call that starts under the cap can still finish over it.
 - Card values are near-real-time, not a synchronous balance.
-- PayGo cards are meant to bill past a prepaid pool. The default buying model is `PrePurchased`. Pass `PayGo` only when that model should be capped.
+- PayGo cards are meant to bill past a prepaid pool. This check uses the PrePurchased Flex Credits card.
 
-## Org
+## How to read the code
 
-Enterprise or Unlimited, or a Data One companion org, with Data 360 turned on. `sourceApiVersion` 67.0 (the `sfdw` namespace and `computeConsumption` action require 63.0 or later). Digital Wallet is not available in sandboxes.
+`FlexCreditOverageGuard` is one class. There is no SOQL and no other package dependency.
 
-The class reads the standard action and does not query Data Cloud DMOs:
+- `assertWithinEntitlement` is what the agent action calls. It reads the org, then applies the rule.
+- `fetchCards` is the only org read. It calls `computeConsumption` once. That action returns every `sfdw.ConsumptionCard`. Tests stub that read with `cardsOverride` or `actionErrorOverride`, then call `resetOverrides`.
+- `decide` keeps the card whose `cardDefinitionDeveloperName` is `FlexCredits`, with `businessEnvType` `Production` and `usageModel` `PrePurchased`. It ignores the other cards.
+
+The match uses `String.equals` on `cardDefinitionDeveloperName`, `businessEnvType`, and `usageModel`, because Apex `==` ignores case. The display name “Flex Credits” is not the developer name.
+
+Doubles on the card are compared as Decimals. Values Apex prints in scientific notation still convert, and exception text uses the plain number.
 
 ```apex
 Invocable.Action computeAction = Invocable.Action.createStandardAction('computeConsumption');
@@ -44,26 +49,32 @@ List<Invocable.Action.Result> results = computeAction.invoke();
 // results[0].getOutputParameters().get('cards') -> List<sfdw.ConsumptionCard>
 ```
 
-A card matches only when `cardDefinitionDeveloperName`, `businessEnvType`, and `usageModel` all match. Developer name alone is not unique. When the caller omits environment and buying model, the check uses `Production` and `PrePurchased`.
-
-Doubles are compared as Decimals via `Decimal.valueOf(String.valueOf(...))`. Values Apex prints in scientific notation use `Decimal.valueOf(Double)` so the conversion still succeeds.
-
 ## API
 
 | Method | Behavior |
 | --- | --- |
-| `assertWithinEntitlement(name, estimatedUnits)` | Production / PrePurchased. Unlimited pools are not capped. |
-| `assertWithinEntitlement(name, estimatedUnits, businessEnvType, usageModel)` | Same, with an explicit environment and buying model. |
-| `assertWithinEntitlement(name, estimatedUnits, businessEnvType, usageModel, capUnlimited)` | Pass `true` to also cap entitlements at or above 1,000,000,000,000. |
+| `assertWithinEntitlement()` | Finds the Production / PrePurchased Flex Credits card. Blocks when consumed units are already at or over the entitlement. Unlimited pools are not capped. |
 
-`CreditLimitExceededException` means the card was found and `unitsConsumed + estimatedUnits >= totalEntitlement`.
+`CreditLimitExceededException` means that card was found and `unitsConsumed >= totalEntitlement`. The message starts with `Flex credit overage`.
 
-`ConsumptionUnavailableException` means the action failed, cards were missing, no card matched, or `totalEntitlement` was null. Both abort the transaction. A null `unitsConsumed` on a matched card is treated as 0.
+`ConsumptionUnavailableException` means the action failed, cards were missing, the Flex Credits card was not in the list, or `totalEntitlement` was null. Both stop the action. A null `unitsConsumed` on a matched card is treated as 0.
 
-## Tests
+## Org
+
+Enterprise or Unlimited, or a Data One companion org, with Data 360 turned on. `sourceApiVersion` 67.0 (the `sfdw` namespace and `computeConsumption` action require 63.0 or later). Digital Wallet is not available in sandboxes.
+
+The class compiles only in an org where the `sfdw` namespace exists. Tests do not invoke `computeConsumption`.
+
+To run the same Flex Credits check an agent action makes:
 
 ```bash
-sf apex run test --tests FlexCreditGuardTest --code-coverage --result-format human --wait 10
+sf apex run --file scripts/apex/tryOverageGuard.apex --target-org DigitalWalletDemo
 ```
 
-Tests construct `sfdw.ConsumptionCard` and call `decide`. They do not invoke `computeConsumption`. The class compiles only in an org where the `sfdw` namespace exists.
+The script does not catch the exception. If Flex Credits is at or over the entitlement, the anonymous execution fails and the transaction stops. If it is under, the log shows `GUARD_ALLOWED`.
+
+## Related
+
+This project is a sibling of `apex-partner-digital-wallet`. It uses the same GitHub account and the same Digital Wallet org.
+
+- GitHub: [Amit-Tripathi/apex-flex-credit-overage-guard](https://github.com/Amit-Tripathi/apex-flex-credit-overage-guard)
