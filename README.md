@@ -13,11 +13,11 @@ The guard reads `computeConsumption` and finds the `sfdw.ConsumptionCard` whose 
 
 ## Deploy and test
 
-Org alias: `DigitalWalletDemo` (Unlimited, Digital Wallet enabled). The project stores that alias locally, so the global CLI default org stays unchanged.
+Deploy to an Enterprise or Unlimited org with Digital Wallet enabled. The commands use the Salesforce CLI default org.
 
 ```bash
-sf project deploy start --source-dir force-app --target-org DigitalWalletDemo
-sf apex run test --tests FlexCreditOverageGuardTest --code-coverage --result-format human --wait 10 --target-org DigitalWalletDemo
+sf project deploy start --source-dir force-app
+sf apex run test --tests FlexCreditOverageGuardTest --code-coverage --result-format human --wait 10
 ```
 
 ## What this does not do
@@ -59,6 +59,29 @@ List<Invocable.Action.Result> results = computeAction.invoke();
 
 `ConsumptionUnavailableException` means the action failed, cards were missing, the Flex Credits card was not in the list, or `totalEntitlement` was null. Both stop the action. A null `unitsConsumed` on a matched card is treated as 0.
 
+## Error message
+
+A throw stops the action. The exception text is not what the user sees unless the calling action returns it. Catch both exceptions, roll back any DML already done in that transaction, and put `getMessage()` on an output variable. The agent reads that output. An uncaught throw still aborts the transaction; the user then gets the agent’s system error message.
+
+```apex
+Savepoint sp = Database.setSavepoint();
+try {
+    FlexCreditOverageGuard.assertWithinEntitlement();
+    // then the agent action continues
+} catch (FlexCreditOverageGuard.CreditLimitExceededException e) {
+    Database.rollback(sp);
+    result.errorMessage = e.getMessage();
+} catch (FlexCreditOverageGuard.ConsumptionUnavailableException e) {
+    Database.rollback(sp);
+    result.errorMessage = e.getMessage();
+}
+```
+
+Declare `errorMessage` as an `@InvocableVariable` on the action output. Both builders take that output and store it in one of their variables, then tell the agent to show it. Follow the current docs for the assignment; the screens and script properties change.
+
+- Agent Script: [Actions](https://developer.salesforce.com/docs/ai/agentforce/guide/ascript-ref-actions.html) (action outputs the agent can read) and [Variables](https://developer.salesforce.com/docs/ai/agentforce/guide/ascript-patterns-variables.html) (store an action output in a variable and show it). The separate system error message is in the [system block](https://developer.salesforce.com/docs/ai/agentforce/guide/ascript-blocks.html).
+- Legacy Agent Builder: [Custom agent actions](https://help.salesforce.com/s/articleView?id=ai.copilot_actions_custom.htm&language=en_US&type=5) (map the Apex output and the instructions that tell the agent to show it) and [Agent actions](https://help.salesforce.com/s/articleView?id=sf.copilot_actions.htm&language=en_US&type=5).
+
 ## Org
 
 Enterprise or Unlimited, or a Data One companion org, with Data 360 turned on. `sourceApiVersion` 67.0 (the `sfdw` namespace and `computeConsumption` action require 63.0 or later). Digital Wallet is not available in sandboxes.
@@ -68,13 +91,13 @@ The class compiles only in an org where the `sfdw` namespace exists. Tests do no
 To run the same Flex Credits check an agent action makes:
 
 ```bash
-sf apex run --file scripts/apex/tryOverageGuard.apex --target-org DigitalWalletDemo
+sf apex run --file scripts/apex/tryOverageGuard.apex
 ```
 
 The script does not catch the exception. If Flex Credits is at or over the entitlement, the anonymous execution fails and the transaction stops. If it is under, the log shows `GUARD_ALLOWED`.
 
 ## Related
 
-This project is a sibling of `apex-partner-digital-wallet`. It uses the same GitHub account and the same Digital Wallet org.
+This project is a sibling of `apex-partner-digital-wallet`.
 
 - GitHub: [Amit-Tripathi/apex-flex-credit-overage-guard](https://github.com/Amit-Tripathi/apex-flex-credit-overage-guard)
