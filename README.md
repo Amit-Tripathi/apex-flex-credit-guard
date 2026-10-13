@@ -69,7 +69,7 @@ List<Invocable.Action.Result> results = computeAction.invoke();
 
 | Method | Behavior |
 | --- | --- |
-| `assertWithinEntitlement()` | Finds the Production / PrePurchased Flex Credits card. Blocks when consumed units are already at or over the entitlement. Unlimited pools are not capped. |
+| `assertWithinEntitlement()` | Finds the Production / PrePurchased Flex Credits card. Blocks when `unitsConsumed >= totalEntitlement`. |
 
 `CreditLimitExceededException` means that card was found and `unitsConsumed >= totalEntitlement`. The message starts with `Flex credit overage`.
 
