@@ -9,7 +9,7 @@ FlexCreditOverageGuard.assertWithinEntitlement();
 
 An agent action calls it once, then does its own work. A throw stops that action. A normal return means the action continues. A later scheduled check cannot prevent the transaction that is already running.
 
-The guard reads `computeConsumption` and finds the `sfdw.ConsumptionCard` whose `cardDefinitionDeveloperName` is `FlexCredits`, `businessEnvType` is `Production`, and `usageModel` is `PrePurchased`. Those values are on the standard card. The caller does not pass them.
+The guard reads `computeConsumption` and compares `unitsConsumed` with `totalEntitlement` on the `sfdw.ConsumptionCard` whose `cardDefinitionDeveloperName` is `FlexCredits`, `businessEnvType` is `Production`, and `usageModel` is `PrePurchased`. Those two amounts are already on the card. The caller does not pass the card name.
 
 ## Deploy and test
 
@@ -29,14 +29,29 @@ Digital Wallet does not throttle the product at 100%. This sample only stops Ape
 - It blocks when units already consumed are at or over the entitlement. It does not estimate what this call will use. A call that starts under the cap can still finish over it.
 - Card values are near-real-time, not a synchronous balance.
 - PayGo cards are meant to bill past a prepaid pool. This check uses the PrePurchased Flex Credits card.
+- No special handling is applied for very large entitlements. The rule is always `unitsConsumed >= totalEntitlement`.
+
+## Customizing the card filter
+
+The guard matches a specific card by three string constants near the top of
+`FlexCreditOverageGuard.cls`:
+
+| Constant | Value | What it matches |
+| --- | --- | --- |
+| `FLEX_CREDITS_CARD` | `FlexCredits` | `cardDefinitionDeveloperName` |
+| `DEFAULT_BUSINESS_ENV` | `Production` | `businessEnvType` |
+| `DEFAULT_USAGE_MODEL` | `PrePurchased` | `usageModel` |
+
+To guard a different card, change these values directly in the class. The match
+is case-sensitive (`String.equals` is used, not Apex `==`).
 
 ## How to read the code
 
 `FlexCreditOverageGuard` is one class. There is no SOQL and no other package dependency.
 
 - `assertWithinEntitlement` is what the agent action calls. It reads the org, then applies the rule.
-- `fetchCards` is the only org read. It calls `computeConsumption` once. That action returns every `sfdw.ConsumptionCard`. Tests stub that read with `cardsOverride` or `actionErrorOverride`, then call `resetOverrides`.
-- `decide` keeps the card whose `cardDefinitionDeveloperName` is `FlexCredits`, with `businessEnvType` `Production` and `usageModel` `PrePurchased`. It ignores the other cards.
+- `fetchCards` is the only org read. It calls `computeConsumption` once. That action returns every `sfdw.ConsumptionCard`, and each card already has `unitsConsumed` and `totalEntitlement`. Tests stub that read with `cardsOverride` or `actionErrorOverride`, then call `resetOverrides`.
+- `decide` keeps the card whose `cardDefinitionDeveloperName` is `FlexCredits`, with `businessEnvType` `Production` and `usageModel` `PrePurchased`. It blocks when `unitsConsumed >= totalEntitlement`.
 
 The match uses `String.equals` on `cardDefinitionDeveloperName`, `businessEnvType`, and `usageModel`, because Apex `==` ignores case. The display name “Flex Credits” is not the developer name.
 
@@ -47,6 +62,7 @@ Invocable.Action computeAction = Invocable.Action.createStandardAction('computeC
 computeAction.addInvocation();
 List<Invocable.Action.Result> results = computeAction.invoke();
 // results[0].getOutputParameters().get('cards') -> List<sfdw.ConsumptionCard>
+// FlexCredits card: unitsConsumed compared with totalEntitlement
 ```
 
 ## API

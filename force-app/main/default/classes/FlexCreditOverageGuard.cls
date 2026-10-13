@@ -6,19 +6,15 @@
  * A throw rolls back that transaction's DML. It does not roll back Digital Wallet usage
  * that another publisher already emitted.
  *
- * The check reads computeConsumption and the sfdw.ConsumptionCard list it returns.
- * It does not query Data Cloud DMOs. The Flex Credits card is the row whose
- * cardDefinitionDeveloperName is FlexCredits. The caller does not pass that name.
+ * The check reads computeConsumption and compares unitsConsumed with
+ * totalEntitlement on the sfdw.ConsumptionCard whose cardDefinitionDeveloperName
+ * is FlexCredits. Those two properties are already on the card. The caller
+ * does not pass the card name.
  */
 public with sharing class FlexCreditOverageGuard {
 
     public class CreditLimitExceededException extends Exception {}
     public class ConsumptionUnavailableException extends Exception {}
-
-    // Entitlements at or above this quantity are treated as unlimited.
-    // decide() caps them only when a test passes true.
-    @TestVisible
-    static final Decimal UNLIMITED_THRESHOLD = 1000000000000L;
 
     // Standard fields on sfdw.ConsumptionCard. FlexCredits is the card definition
     // developer name, not the display label "Flex Credits".
@@ -43,13 +39,13 @@ public with sharing class FlexCreditOverageGuard {
 
     /**
      * Stops the action when the Production / PrePurchased Flex Credits card is
-     * already at or over its entitlement. Unlimited entitlements are not capped.
+     * already at or over its entitlement.
      *
      * @throws CreditLimitExceededException when units already consumed reach the entitlement.
      * @throws ConsumptionUnavailableException when the card cannot be read.
      */
     public static void assertWithinEntitlement() {
-        decide(fetchCards(), false);
+        decide(fetchCards());
     }
 
     /**
@@ -64,17 +60,14 @@ public with sharing class FlexCreditOverageGuard {
     // --- Decision ---
 
     /**
-     * Applies the cap to an already loaded card list. Tests call this with
-     * constructed sfdw.ConsumptionCard values and never invoke the action.
+     * Applies the entitlement check to an already loaded card list. Tests call
+     * this with constructed sfdw.ConsumptionCard values and never invoke the action.
      */
     @TestVisible
-    static void decide(List<sfdw.ConsumptionCard> cards, Boolean capUnlimitedPools) {
+    static void decide(List<sfdw.ConsumptionCard> cards) {
         sfdw.ConsumptionCard match = requireCard(cards);
         Decimal entitlement = toDecimal(match.totalEntitlement);
         Decimal consumed = (match.unitsConsumed == null) ? 0 : toDecimal(match.unitsConsumed);
-        if (capUnlimitedPools != true && entitlement >= UNLIMITED_THRESHOLD) {
-            return;
-        }
         if (consumed >= entitlement) {
             throw new CreditLimitExceededException(
                 outcomeMessage(OVERAGE_REASON, consumed, entitlement)

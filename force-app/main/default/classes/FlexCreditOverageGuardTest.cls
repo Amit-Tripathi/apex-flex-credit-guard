@@ -20,7 +20,7 @@ private class FlexCreditOverageGuardTest {
     @IsTest
     static void throwsWhenConsumedEqualsEntitlement() {
         try {
-            FlexCreditOverageGuard.decide(flex(100, 100), false);
+            FlexCreditOverageGuard.decide(flex(100, 100));
             Assert.fail('Expected CreditLimitExceededException');
         } catch (FlexCreditOverageGuard.CreditLimitExceededException ex) {
             Assert.isTrue(ex.getMessage().contains('Flex credit overage'));
@@ -38,7 +38,7 @@ private class FlexCreditOverageGuardTest {
     @IsTest
     static void throwsWhenConsumedExceedsEntitlement() {
         try {
-            FlexCreditOverageGuard.decide(flex(101, 100), false);
+            FlexCreditOverageGuard.decide(flex(101, 100));
             Assert.fail('Expected CreditLimitExceededException');
         } catch (FlexCreditOverageGuard.CreditLimitExceededException ex) {
             Assert.isTrue(ex.getMessage().contains('consumed 101'));
@@ -48,7 +48,7 @@ private class FlexCreditOverageGuardTest {
 
     @IsTest
     static void allowsWhenConsumedIsUnderEntitlement() {
-        FlexCreditOverageGuard.decide(flex(80, 100), false);
+        FlexCreditOverageGuard.decide(flex(80, 100));
     }
 
     @IsTest
@@ -57,8 +57,7 @@ private class FlexCreditOverageGuardTest {
             FlexCreditOverageGuard.decide(
                 new List<sfdw.ConsumptionCard>{
                     card('FlexCredits', 'Production', 'PayGo', 10, 100)
-                },
-                false
+                }
             );
             Assert.fail('Expected ConsumptionUnavailableException');
         } catch (FlexCreditOverageGuard.ConsumptionUnavailableException ex) {
@@ -71,7 +70,7 @@ private class FlexCreditOverageGuardTest {
     @IsTest
     static void throwsWhenCardListIsEmpty() {
         try {
-            FlexCreditOverageGuard.decide(new List<sfdw.ConsumptionCard>(), false);
+            FlexCreditOverageGuard.decide(new List<sfdw.ConsumptionCard>());
             Assert.fail('Expected ConsumptionUnavailableException');
         } catch (FlexCreditOverageGuard.ConsumptionUnavailableException ex) {
             Assert.isTrue(ex.getMessage().contains('No consumption card matched'));
@@ -81,7 +80,7 @@ private class FlexCreditOverageGuardTest {
     @IsTest
     static void throwsWhenCardsAreNull() {
         try {
-            FlexCreditOverageGuard.decide(null, false);
+            FlexCreditOverageGuard.decide(null);
             Assert.fail('Expected ConsumptionUnavailableException');
         } catch (FlexCreditOverageGuard.ConsumptionUnavailableException ex) {
             Assert.isTrue(ex.getMessage().contains('not returned'));
@@ -89,25 +88,23 @@ private class FlexCreditOverageGuardTest {
     }
 
     @IsTest
-    static void skipsUnlimitedEntitlementUnlessCallerCapsIt() {
-        Double unlimited = 1000000000000.0;
-        FlexCreditOverageGuard.decide(flex(unlimited, unlimited), false);
-
+    static void throwsWhenLargeConsumedEqualsLargeEntitlement() {
+        Double large = 1000000000000.0;
         try {
-            FlexCreditOverageGuard.decide(flex(unlimited, unlimited), true);
-            Assert.fail('Expected CreditLimitExceededException when unlimited pools are capped');
+            FlexCreditOverageGuard.decide(flex(large, large));
+            Assert.fail('Expected CreditLimitExceededException');
         } catch (FlexCreditOverageGuard.CreditLimitExceededException ex) {
             Assert.isTrue(ex.getMessage().contains('Flex credit overage'));
             Assert.isTrue(ex.getMessage().contains('FlexCredits'));
-            Assert.isTrue(ex.getMessage().contains('entitlement 1000000000000'));
-            Assert.isFalse(ex.getMessage().contains('E'));
+            Assert.isTrue(ex.getMessage().contains('1000000000000'));
+            Assert.isFalse(ex.getMessage().contains('E')); // no scientific notation
         }
     }
 
     @IsTest
     static void throwsWhenEntitlementIsNull() {
         try {
-            FlexCreditOverageGuard.decide(flex(5, null), false);
+            FlexCreditOverageGuard.decide(flex(5, null));
             Assert.fail('Expected ConsumptionUnavailableException');
         } catch (FlexCreditOverageGuard.ConsumptionUnavailableException ex) {
             Assert.isTrue(ex.getMessage().contains('Total entitlement was null'));
@@ -117,9 +114,9 @@ private class FlexCreditOverageGuardTest {
 
     @IsTest
     static void treatsNullUnitsConsumedAsZero() {
-        FlexCreditOverageGuard.decide(flex(null, 10), false);
+        FlexCreditOverageGuard.decide(flex(null, 10));
         try {
-            FlexCreditOverageGuard.decide(flex(null, 0), false);
+            FlexCreditOverageGuard.decide(flex(null, 0));
             Assert.fail('Expected CreditLimitExceededException');
         } catch (FlexCreditOverageGuard.CreditLimitExceededException ex) {
             Assert.isTrue(ex.getMessage().contains('consumed 0'));
@@ -133,7 +130,7 @@ private class FlexCreditOverageGuardTest {
             card('FlexCredits', 'Production', 'PayGo', 500, 100),
             card('FlexCredits', 'Production', 'PrePurchased', 40, 100)
         };
-        FlexCreditOverageGuard.decide(cards, false);
+        FlexCreditOverageGuard.decide(cards);
     }
 
     @IsTest
@@ -142,8 +139,7 @@ private class FlexCreditOverageGuardTest {
             FlexCreditOverageGuard.decide(
                 new List<sfdw.ConsumptionCard>{
                     card('flexcredits', 'Production', 'PrePurchased', 100, 100)
-                },
-                false
+                }
             );
             Assert.fail('Expected ConsumptionUnavailableException');
         } catch (FlexCreditOverageGuard.ConsumptionUnavailableException ex) {
@@ -157,7 +153,7 @@ private class FlexCreditOverageGuardTest {
             null,
             card('FlexCredits', 'Production', 'PrePurchased', 10, 100)
         };
-        FlexCreditOverageGuard.decide(cards, false);
+        FlexCreditOverageGuard.decide(cards);
     }
 
     @IsTest
@@ -166,8 +162,7 @@ private class FlexCreditOverageGuardTest {
             FlexCreditOverageGuard.decide(
                 new List<sfdw.ConsumptionCard>{
                     card('FlexCredits', 'Sandbox', 'PrePurchased', 10, 100)
-                },
-                false
+                }
             );
             Assert.fail('Expected ConsumptionUnavailableException');
         } catch (FlexCreditOverageGuard.ConsumptionUnavailableException ex) {
@@ -208,7 +203,7 @@ private class FlexCreditOverageGuardTest {
         Map<String, Object> output = new Map<String, Object>{ 'cards' => cards };
         List<sfdw.ConsumptionCard> read = FlexCreditOverageGuard.cardsFromOutput(output);
         Assert.areEqual(1, read.size());
-        FlexCreditOverageGuard.decide(read, false);
+        FlexCreditOverageGuard.decide(read);
     }
 
     @IsTest
