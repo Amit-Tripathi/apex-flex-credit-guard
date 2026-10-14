@@ -20,15 +20,15 @@ sequenceDiagram
     participant W as Digital Wallet
 
     A->>X: invoke action
-    X->>G: assertWithinEntitlement()
+    X->>G: isOverEntitlement()
     G->>W: computeConsumption
     W-->>G: ConsumptionCard list
 
     alt consumed >= entitlement
-        G-->>X: CreditLimitExceededException
+        G-->>X: true
         X-->>A: errorMessage (action stopped)
     else consumed < entitlement
-        G-->>X: returns normally
+        G-->>X: false
         X->>X: run action logic
         X-->>A: success
     end
@@ -51,24 +51,18 @@ sf apex run test --tests FlexCreditOverageGuardTest --code-coverage --result-for
 
 ### Add the guard to your action
 
-Call `assertWithinEntitlement()` at the top of your `@InvocableMethod`, before any
-DML. Use a savepoint so the exception message can be returned to the agent or flow.
+Call `isOverEntitlement()` at the top of your `@InvocableMethod`, before any DML,
+and return an error message when it is `true`.
 
 ```apex
 @InvocableMethod(label='My Action' description='Checks Flex Credits before running.')
 public static List<Response> run(List<Request> requests) {
     Response result = new Response();
-    Savepoint sp = Database.setSavepoint();
-    try {
-        FlexCreditOverageGuard.assertWithinEntitlement();
-        // your action logic here
-    } catch (FlexCreditOverageGuard.CreditLimitExceededException e) {
-        Database.rollback(sp);
-        result.errorMessage = e.getMessage();
-    } catch (FlexCreditOverageGuard.ConsumptionUnavailableException e) {
-        Database.rollback(sp);
-        result.errorMessage = e.getMessage();
+    if (FlexCreditOverageGuard.isOverEntitlement()) {
+        result.errorMessage = 'Flex credit entitlement reached — action blocked.';
+        return new List<Response>{ result };
     }
+    // your action logic here
     return new List<Response>{ result };
 }
 
@@ -93,10 +87,10 @@ the agent or flow to surface it when non-blank.
 
 ### How it works
 
-`assertWithinEntitlement` calls the standard `computeConsumption` action once.
+`isOverEntitlement` calls the standard `computeConsumption` action once.
 That action returns every `sfdw.ConsumptionCard`. The guard finds the card where
 `cardDefinitionDeveloperName` is `FlexCredits`, `businessEnvType` is `Production`,
-and `usageModel` is `PrePurchased`, then checks `unitsConsumed >= totalEntitlement`.
+and `usageModel` is `PrePurchased`, then returns `true` when `unitsConsumed >= totalEntitlement`.
 
 Card values are near-real-time, not a synchronous balance. There is no SOQL and
 no package dependency beyond the `sfdw` namespace.
@@ -112,15 +106,14 @@ The match is case-sensitive (`String.equals`, not Apex `==`).
 | `DEFAULT_BUSINESS_ENV` | `Production` | `businessEnvType` |
 | `DEFAULT_USAGE_MODEL` | `PrePurchased` | `usageModel` |
 
-### Exceptions
+### Return values
 
-| Exception | Meaning |
+| Return | Meaning |
 | --- | --- |
-| `CreditLimitExceededException` | Card found; `unitsConsumed >= totalEntitlement`. Message starts with `Flex credit overage`. |
-| `ConsumptionUnavailableException` | Action failed, card missing, or `totalEntitlement` null. A null `unitsConsumed` on a matched card is treated as `0`. |
+| `true` | Card found and `unitsConsumed >= totalEntitlement`. Block the action. |
+| `false` | Card absent, action unavailable, `totalEntitlement` null, or `unitsConsumed < totalEntitlement`. Allow through — the platform enforces limits independently when no entitlement exists. |
 
-Both exceptions abort the transaction. Neither rolls back Digital Wallet usage
-already emitted by other publishers.
+A null `unitsConsumed` on a matched card is treated as `0`.
 
 ### Limitations
 
@@ -131,7 +124,7 @@ already emitted by other publishers.
 ### Out of scope
 
 - **`@InvocableMethod`** — this class has no `@InvocableMethod` annotation and cannot appear directly in Flow Builder or Agentforce Builder. Wrap it in your own action class (see [Usage](#usage) above).
-- **Fail-open mode** — `ConsumptionUnavailableException` always stops the transaction. There is no retry or "allow through if card is unavailable" option.
+- **Fail-open mode** — when the action fails or the card is absent `isOverEntitlement()` returns `false` (allow through). There is no option to block on unavailability.
 - **Async / scheduled monitoring** — no background job, no event-based alert as usage approaches the limit.
 - **Multi-card aggregation or percentage thresholds** — one card, one binary check (`>= entitlement`).
 
