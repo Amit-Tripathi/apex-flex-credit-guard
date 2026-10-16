@@ -1,16 +1,19 @@
 # apex-flex-credit-overage-guard
 
-A guard that stops an Agentforce action or Flow before it runs when the org's
-Flex Credits are already at their entitlement.
+Detect Flex Credit overage and, optionally, block Agentforce from consuming
+additional credits once the entitlement is reached.
 
 ## Problem
 
 Salesforce Digital Wallet does not throttle Agentforce at the entitlement boundary.
-An action that runs at 100% usage pushes the org into overage. This guard checks
-the Flex Credits balance at the start of a transaction and throws before any work
-is done, keeping the org within its prepaid pool.
+An action that runs at 100% usage pushes the org into overage.
 
-## Solution
+This project addresses **two separate concerns**:
+
+1. **Overage Signal** (this repo) — detect when consumed >= entitlement and surface a boolean signal.
+2. **Preventing Further Consumption** (separate implementation) — react to that signal by blocking Agentforce from consuming additional credits.
+
+## Part 1 — Overage Signal
 
 ```mermaid
 sequenceDiagram
@@ -144,3 +147,32 @@ sf apex run --file scripts/apex/tryOverageGuard.apex
 ### Related
 
 This project is a sibling of `apex-partner-digital-wallet`.
+
+---
+
+## Part 2 — Preventing Further Credit Consumption
+
+The overage signal above is a per-transaction check. To **prevent the org from
+accumulating overage charges** once the entitlement is reached, a separate
+architecture must react to that signal and block Agentforce from consuming
+additional credits. The blocking mechanism must be native Apex (no Metadata API or
+Tooling API callouts) and must not itself consume credits on an ongoing basis.
+
+| Architecture | How it works | Blocking speed | Granularity | State preservation | Ongoing credit cost | Validation needed |
+| --- | --- | --- | --- | --- | --- | --- |
+| **PSG Component removal** | Delete `PermissionSetGroupComponent` records that link the Agentforce Permission Set to the PSG. Re-insert to restore. | Seconds (DML + PSG recalc) | Org-wide — every user in the PSG loses the PS | Configuration-based — the PS → PSG mapping is known and fixed | None — agents cannot start | Confirm `PermissionSetGroupComponent` delete/insert works in scheduled context; measure PSG recalc window |
+| **UAP + User checkbox** | Two always-active User Access Policies: a Grant UAP (filter: `Agentforce_Enabled__c = true`) and a Revoke UAP (filter: `Agentforce_Enabled__c = false`). Scheduled Apex flips the checkbox; UAP fires on User update and handles PSG assignment. | Near-instant (UAP fires in User DML transaction) | Per-user, per-profile, or per-role — whatever the UAP filter targets | Self-preserving — the UAP definition *is* the desired state | None — agents cannot start | Confirm Revoke-action UAP removes `PermissionSetAssignment` on PSG; verify bulk User DML + UAP trigger governor limits |
+| **Einstein toggle (Metadata API)** | Deploy `EinsteinGptSettings.enableEinsteinGptPlatform = false`. | Minutes (async metadata deploy) | Org-wide — **all** Einstein generative AI features disabled, not just Agentforce | Stateless — deploy `true` to restore | None | Violates native-Apex constraint; some editions may not allow disabling |
+| **Deactivate agent definition** | Deploy `Bot`/`GenAiPlanner` metadata with active flag set to `false`. | Minutes (async metadata deploy) | Per-agent | Stateless — reactivate to restore | None | Violates native-Apex constraint; disrupts in-flight conversations |
+| **Custom Setting circuit breaker** | Hierarchy Custom Setting checked at every agent entry point. | Instant (cached read) | Only entry points you wire the check into | Stateless — flip the boolean | Each guarded invocation still starts an agent turn before the check runs | Not a platform-level gate — unguarded paths still consume credits |
+
+### Recommended approach
+
+**UAP + User checkbox** for orgs that need per-user granularity and self-healing
+restore. **PSG Component removal** for orgs that want the simplest native Apex
+implementation with an org-wide blast radius.
+
+Both approaches share the same driver: a Scheduled Apex job calls
+`FlexCreditOverageGuard.isOverEntitlement()` outside agent context (so the check
+itself does not consume flex credits), then executes the blocking or restore DML
+based on the result.
